@@ -63,6 +63,7 @@ class SnakeApp:
         self.config = GameConfig()
         self.engine: GameEngine | None = None
         self.strategy: type[MoveStrategy] | MoveStrategy | None = None
+        self.secondary_strategy: type[MoveStrategy] | MoveStrategy | None = None
         self.last_ai_move_ms = 0
         self.running = True
         self._buttons: dict[str, pygame.Rect] = {}
@@ -72,7 +73,9 @@ class SnakeApp:
         self.detail_scroll = 0
         self.detail_max_scroll = 0
         self.worker: StrategyWorker | None = None
+        self.secondary_worker: StrategyWorker | None = None
         self.ready_move = None
+        self.secondary_ready_move = None
 
     def _resize_canvas(self) -> None:
         size = tuple(max(minimum, round(length / self.ui_zoom))
@@ -126,19 +129,29 @@ class SnakeApp:
 
     def close_worker(self) -> None:
         self.ready_move = None
+        self.secondary_ready_move = None
         if self.worker is not None:
             self.worker.close()
             self.worker = None
+        if self.secondary_worker is not None:
+            self.secondary_worker.close()
+            self.secondary_worker = None
 
     def start_game(self) -> None:
         try:
             strategy = STRATEGY_REGISTRY[self.config.strategy_name]
+            secondary_strategy = (
+                STRATEGY_REGISTRY[self.config.secondary_strategy_name]
+                if self.config.mode is GameMode.AI_VS_AI
+                else None
+            )
         except Exception as exc:
             self.setup_error = f"Cannot start strategy: {type(exc).__name__}: {exc}"
             return
         self.close_worker()
         self.engine = GameEngine(self.config, rng=random.Random())
         self.strategy = strategy
+        self.secondary_strategy = secondary_strategy
         self.last_ai_move_ms = pygame.time.get_ticks()
         self.screen = Screen.GAME
         self.focused = None
@@ -151,6 +164,7 @@ class SnakeApp:
         self.close_worker()
         self.engine = None
         self.strategy = None
+        self.secondary_strategy = None
         self.screen = Screen.SETUP
         self.focused = None
 
@@ -281,8 +295,9 @@ class SnakeApp:
             return
         pos = event.pos
         if self._hit("mode", pos):
-            mode = GameMode.VERSUS if self.config.mode is GameMode.SINGLE else GameMode.SINGLE
-            self.config = replace(self.config, mode=mode)
+            modes = list(GameMode)
+            index = (modes.index(self.config.mode) + 1) % len(modes)
+            self.config = replace(self.config, mode=modes[index])
         elif self._hit("rows_minus", pos):
             self.config = replace(self.config, rows=max(10, self.config.rows - 1))
         elif self._hit("rows_plus", pos):
@@ -304,13 +319,20 @@ class SnakeApp:
         elif self._hit("speed_plus", pos):
             self.config = replace(self.config, ai_speed=min(10, self.config.ai_speed + 1))
         elif self._hit("strategy", pos):
-            names = list(STRATEGY_REGISTRY)
-            if names:
-                index = (names.index(self.config.strategy_name) + 1) % len(names) if self.config.strategy_name in names else 0
-                self.config = replace(self.config, strategy_name=names[index])
-                self.setup_error = ""
+            self._cycle_strategy("strategy_name")
+        elif self._hit("secondary_strategy", pos):
+            self._cycle_strategy("secondary_strategy_name")
         elif self._hit("start", pos):
             self.start_game()
+
+    def _cycle_strategy(self, field: str) -> None:
+        names = list(STRATEGY_REGISTRY)
+        if not names:
+            return
+        current = getattr(self.config, field)
+        index = (names.index(current) + 1) % len(names) if current in names else 0
+        self.config = replace(self.config, **{field: names[index]})
+        self.setup_error = ""
 
     def _handle_game_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -361,12 +383,14 @@ class SnakeApp:
             self.close_worker()
             self.screen = Screen.RESULTS
             return
-        if self.worker is not None and (self.worker.pending or self.ready_move is not None):
-            self._perform_ai_move()
+        snake_id = self.engine.active_snake_id
+        worker, ready_move = self._worker_state(snake_id)
+        if worker is not None and (worker.pending or ready_move is not None):
+            self._perform_ai_move(snake_id)
             return
         if self.engine.status is not GameStatus.RUNNING:
             return
-        if self.engine.active_snake_id != AI_ID:
+        if snake_id == HUMAN_ID and self.config.mode is not GameMode.AI_VS_AI:
             return
 
         now = pygame.time.get_ticks()
@@ -374,44 +398,72 @@ class SnakeApp:
         if now - self.last_ai_move_ms < interval:
             return
         self.last_ai_move_ms = now
-        self._perform_ai_move()
+        self._perform_ai_move(snake_id)
         if self.engine.status is GameStatus.FINISHED:
             self.screen = Screen.RESULTS
 
-    def _perform_ai_move(self) -> None:
-        assert self.engine is not None and self.strategy is not None
+    def _worker_state(self, snake_id: str):
+        secondary = self.config.mode is GameMode.AI_VS_AI and snake_id == AI_ID
+        if secondary:
+            return self.secondary_worker, self.secondary_ready_move
+        return self.worker, self.ready_move
+
+    def _set_worker(self, snake_id: str, worker: StrategyWorker | None) -> None:
+        if self.config.mode is GameMode.AI_VS_AI and snake_id == AI_ID:
+            self.secondary_worker = worker
+        else:
+            self.worker = worker
+
+    def _set_ready_move(self, snake_id: str, result) -> None:
+        if self.config.mode is GameMode.AI_VS_AI and snake_id == AI_ID:
+            self.secondary_ready_move = result
+        else:
+            self.ready_move = result
+
+    def _strategy_for(self, snake_id: str):
+        if self.config.mode is GameMode.AI_VS_AI and snake_id == AI_ID:
+            return self.secondary_strategy
+        return self.strategy
+
+    def _perform_ai_move(self, snake_id: str | None = None) -> None:
+        assert self.engine is not None
+        snake_id = snake_id or self.engine.active_snake_id
+        strategy = self._strategy_for(snake_id)
+        assert strategy is not None
+        worker, ready_move = self._worker_state(snake_id)
         try:
-            if self.worker is None:
-                self.worker = StrategyWorker(self.strategy, construct=isinstance(self.strategy, type))
-            if not self.worker.pending and self.ready_move is None:
-                self.worker.submit(self.engine.snapshot(), AI_ID, self.engine.rng.getstate())
+            if worker is None:
+                worker = StrategyWorker(strategy, construct=isinstance(strategy, type))
+                self._set_worker(snake_id, worker)
+            if not worker.pending and ready_move is None:
+                worker.submit(self.engine.snapshot(), snake_id, self.engine.rng.getstate())
                 return
-            result = self.ready_move if self.ready_move is not None else self.worker.poll()
+            result = ready_move if ready_move is not None else worker.poll()
             if result is None:
                 return
             direction, rng_state, error = result
             if error:
                 raise RuntimeError(error)
             if self.engine.status is GameStatus.PAUSED:
-                self.ready_move = result
+                self._set_ready_move(snake_id, result)
                 return
-            self.ready_move = None
+            self._set_ready_move(snake_id, None)
             self.engine.rng.setstate(rng_state)
         except Exception as exc:
             if self.engine.status is GameStatus.PAUSED:
                 self.engine.resume()
-            self.engine.fail_strategy(AI_ID, f"{type(exc).__name__}: {exc}")
+            self.engine.fail_strategy(snake_id, f"{type(exc).__name__}: {exc}")
             self.close_worker()
             return
         self.last_ai_move_ms = pygame.time.get_ticks()
         if not isinstance(direction, Direction):
-            self.engine.fail_strategy(AI_ID, "Strategy returned a value that is not a Direction.")
+            self.engine.fail_strategy(snake_id, "Strategy returned a value that is not a Direction.")
             return
-        snake = self.engine.snapshot().snake(AI_ID)
+        snake = self.engine.snapshot().snake(snake_id)
         if len(snake.body) > 1 and direction is snake.direction.opposite:
-            self.engine.fail_strategy(AI_ID, "Strategy attempted a direct reversal.")
+            self.engine.fail_strategy(snake_id, "Strategy attempted a direct reversal.")
             return
-        self.engine.step(AI_ID, direction)
+        self.engine.step(snake_id, direction)
 
     def draw(self) -> None:
         self.surface.fill(BACKGROUND)
@@ -439,22 +491,39 @@ class SnakeApp:
             center=True,
         )
         top = 100 if compact else 140
-        pitch = 52 if compact else 65
+        ai_vs_ai = self.config.mode is GameMode.AI_VS_AI
+        pitch = (47 if compact else 57) if ai_vs_ai else (52 if compact else 65)
         panel = pygame.Rect(center - 305, top, 610, 448 if compact else 565)
         pygame.draw.rect(self.surface, PANEL, panel, border_radius=18)
         pygame.draw.rect(self.surface, PANEL_LIGHT, panel, 2, border_radius=18)
 
-        first = top + (12 if compact else 30)
+        first = top + (4 if compact and ai_vs_ai else 12 if compact else 20 if ai_vs_ai else 30)
         self._setting_row("Game mode", self.config.mode.value, first, "mode", cycle=True)
         self._setting_row("Rows", str(self.config.rows), first + pitch, "rows")
         self._setting_row("Columns", str(self.config.columns), first + pitch * 2, "cols")
         self._setting_row("Apples", str(self.config.apple_count), first + pitch * 3, "apples")
         self._setting_row("Move limit", str(self.config.move_limit), first + pitch * 4, "moves")
         self._setting_row("AI speed", f"{self.config.ai_speed} moves/s", first + pitch * 5, "speed")
+        strategy_label = "AI 1 strategy" if ai_vs_ai else "Movement strategy"
         self._setting_row(
-            "Movement strategy", self.config.strategy_name, first + pitch * 6, "strategy", cycle=True
+            strategy_label, self.config.strategy_name, first + pitch * 6, "strategy", cycle=True
         )
-        self._button("START MATCH", pygame.Rect(center - 175, first + pitch * 7 + 12, 350, 48), "start", GREEN)
+        button_row = 7
+        if ai_vs_ai:
+            self._setting_row(
+                "AI 2 strategy",
+                self.config.secondary_strategy_name,
+                first + pitch * 7,
+                "secondary_strategy",
+                cycle=True,
+            )
+            button_row = 8
+        self._button(
+            "START MATCH",
+            pygame.Rect(center - 175, first + pitch * button_row + 10, 350, 48),
+            "start",
+            GREEN,
+        )
         line_height = self.font_small.get_linesize()
         second_line_y = height - line_height // 2 - 8
         first_line_y = second_line_y - line_height - 4
@@ -473,7 +542,14 @@ class SnakeApp:
             center=True,
         )
         if self.setup_error:
-            self._text(self._fit_text(self.setup_error, self.font_small, 430) + " [F1: details]", (center, first + pitch * 7), self.font_small, RED, center=True)
+            error_y = first + pitch * button_row
+            self._text(
+                self._fit_text(self.setup_error, self.font_small, 430) + " [F1: details]",
+                (center, error_y),
+                self.font_small,
+                RED,
+                center=True,
+            )
 
     def _setting_row(
         self, label: str, value: str, y: int, key: str, cycle: bool = False
@@ -482,7 +558,7 @@ class SnakeApp:
         self._text(label, (300 + offset, y + (44 - self.font.get_height()) // 2), self.font, TEXT)
         if cycle:
             self._button(value, pygame.Rect(530 + offset, y, 285, 44), key, BLUE,
-                         enabled=key != "strategy" or bool(STRATEGY_REGISTRY))
+                         enabled=key not in ("strategy", "secondary_strategy") or bool(STRATEGY_REGISTRY))
             return
         field, minimum, maximum, _ = SETTINGS[key]
         current = getattr(self.config, field)
@@ -551,7 +627,13 @@ class SnakeApp:
                 x = panel.x + 16 + index % 3 * column_width
                 y = panel.y + 14 + index // 3 * 56
                 self._text(label, (x, y), self.font_small, MUTED)
-                self._text(self._fit_text(value, self.font, column_width - 12), (x, y + 23), self.font, TEXT)
+                value_font = self.font_small if label == "STRATEGIES" else self.font
+                self._text(
+                    self._fit_text(value, value_font, column_width - 12),
+                    (x, y + 23),
+                    value_font,
+                    TEXT,
+                )
             for index, (label, key, color) in enumerate((("PAUSE", "pause", YELLOW), ("RESTART", "restart", BLUE), ("SETUP", "setup", PANEL_LIGHT))):
                 self._button(label, pygame.Rect(panel.x + 16 + index * column_width, panel.bottom - 60, column_width - 12, 44), key, color, enabled=interactive)
             return
@@ -562,7 +644,8 @@ class SnakeApp:
         y = 162
         for label, value in self._stat_rows():
             self._text(label, (x, y), self.font_small, MUTED)
-            self._text(self._fit_text(value, self.font, 215), (x, y + 25), self.font, TEXT)
+            value_font = self.font_small if label == "STRATEGIES" else self.font
+            self._text(self._fit_text(value, value_font, 215), (x, y + 25), value_font, TEXT)
             y += min(66, (panel.height - 250) // 6)
         self._button(
             "RESUME" if self.engine.status is GameStatus.PAUSED else "PAUSE",
@@ -578,25 +661,37 @@ class SnakeApp:
         assert self.engine is not None
         if self.config.mode is GameMode.SINGLE:
             score = f"AI  {self.engine.snakes[AI_ID].score}"
+        elif self.config.mode is GameMode.AI_VS_AI:
+            score = (
+                f"AI 1 {self.engine.snakes[HUMAN_ID].score}  ·  "
+                f"AI 2 {self.engine.snakes[AI_ID].score}"
+            )
         else:
             score = (
                 f"Human {self.engine.snakes[HUMAN_ID].score}  ·  "
                 f"AI {self.engine.snakes[AI_ID].score}"
             )
-        active = "AI" if self.engine.active_snake_id == AI_ID else "Human"
-        if self.worker is not None and self.worker.pending:
-            active = "AI thinking..."
+        active_id = self.engine.active_snake_id
+        active = self.engine.display_name(active_id)
+        active_worker, _ = self._worker_state(active_id)
+        if active_worker is not None and active_worker.pending:
+            active += " thinking..."
         if self.engine.status is GameStatus.FINISHED:
             active = "Finished"
         elif self.engine.status is GameStatus.PAUSED:
             active += " (paused)"
+        strategy = self.config.strategy_name
+        strategy_label = "STRATEGY"
+        if self.config.mode is GameMode.AI_VS_AI:
+            strategy = f"{self.config.strategy_name} / {self.config.secondary_strategy_name}"
+            strategy_label = "STRATEGIES"
         return [
             ("SCORE", score),
             ("ROUND", f"{self.engine.rounds_completed} / {self.config.move_limit}"),
             ("REMAINING", str(self.engine.rounds_remaining)),
             ("ELAPSED", self._format_time(self.engine.elapsed_time)),
             ("ACTIVE TURN", active),
-            ("STRATEGY", self.config.strategy_name),
+            (strategy_label, strategy),
         ]
 
     def _draw_result_overlay(self) -> None:
@@ -608,7 +703,7 @@ class SnakeApp:
             title = "DRAW"
             subtitle = "Both snakes finished with the same score."
         else:
-            title = "HUMAN WINS" if self.engine.winner_id == HUMAN_ID else "AI WINS"
+            title = self.engine.display_name(self.engine.winner_id).upper() + " WINS"
             subtitle = "Highest final score wins."
         if self.engine.error_message:
             subtitle = self.engine.error_message

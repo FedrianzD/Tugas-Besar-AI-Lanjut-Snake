@@ -118,6 +118,20 @@ def test_two_player_round_requires_both_moves() -> None:
     assert game.active_snake_id == HUMAN_ID
 
 
+def test_ai_vs_ai_uses_two_named_ai_players_and_alternating_turns() -> None:
+    game = engine(GameMode.AI_VS_AI, moves=10)
+    game.apples = [(0, 0)]
+
+    assert game.display_name(HUMAN_ID) == "AI 1"
+    assert game.display_name(AI_ID) == "AI 2"
+    assert game.active_snake_id == HUMAN_ID
+    assert game.step(HUMAN_ID, Direction.RIGHT).accepted
+    assert game.active_snake_id == AI_ID
+    assert game.step(AI_ID, Direction.LEFT).accepted
+    assert game.rounds_completed == 1
+    assert game.active_snake_id == HUMAN_ID
+
+
 def test_move_limit_finishes_and_score_selects_winner() -> None:
     game = engine(GameMode.VERSUS, moves=10)
     game.rounds_completed = 9

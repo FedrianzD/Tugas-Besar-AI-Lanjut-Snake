@@ -29,6 +29,7 @@ class Direction(Enum):
 class GameMode(Enum):
     SINGLE = "Single Player (AI)"
     VERSUS = "Human vs AI"
+    AI_VS_AI = "AI vs AI"
 
 
 class GameStatus(Enum):
@@ -46,6 +47,7 @@ class GameConfig:
     apple_count: int = 5
     mode: GameMode = GameMode.SINGLE
     strategy_name: str = "Greedy"
+    secondary_strategy_name: str = "Safe Random"
 
     def __post_init__(self) -> None:
         if not 10 <= self.rows <= 40 or not 10 <= self.columns <= 40:

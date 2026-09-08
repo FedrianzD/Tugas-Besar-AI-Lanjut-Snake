@@ -9,7 +9,7 @@ import pygame
 import pytest
 
 from snake_game.app import Screen, SnakeApp
-from snake_game.models import GameStatus
+from snake_game.models import GameMode, GameStatus
 
 
 @pytest.mark.parametrize("zoom_steps", [1, 2, 4])
@@ -190,4 +190,57 @@ def test_setup_apple_count_control_changes_configuration() -> None:
         )
         assert app.config.apple_count == before + 1
     finally:
+        pygame.quit()
+
+
+def test_ai_vs_ai_setup_exposes_two_strategies_and_automates_both_turns() -> None:
+    from dataclasses import replace
+    import time
+
+    app = SnakeApp()
+    try:
+        app.draw()
+        for expected in (GameMode.VERSUS, GameMode.AI_VS_AI, GameMode.SINGLE):
+            app.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    {"button": 1, "pos": app._buttons["mode"].center},
+                )
+            )
+            assert app.config.mode is expected
+
+        app.config = replace(
+            app.config,
+            mode=GameMode.AI_VS_AI,
+            rows=10,
+            columns=10,
+            ai_speed=10,
+        )
+        app.draw()
+        assert "strategy" in app._buttons
+        assert "secondary_strategy" in app._buttons
+        primary = app.config.strategy_name
+        secondary = app.config.secondary_strategy_name
+        app.handle_event(
+            pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"button": 1, "pos": app._buttons["secondary_strategy"].center},
+            )
+        )
+        assert app.config.strategy_name == primary
+        assert app.config.secondary_strategy_name != secondary
+
+        app.start_game()
+        deadline = time.monotonic() + 10
+        while app.engine.rounds_completed == 0 and time.monotonic() < deadline:
+            app.last_ai_move_ms = 0
+            app.update()
+            time.sleep(0.01)
+
+        assert app.engine.rounds_completed == 1
+        assert app.worker is not None
+        assert app.secondary_worker is not None
+        assert app._stat_rows()[0][1].startswith("AI 1")
+    finally:
+        app.close_worker()
         pygame.quit()

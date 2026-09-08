@@ -4,15 +4,17 @@ A configurable Snake environment for experimenting with AI movement strategies.
 It combines a responsive Pygame interface, a deterministic game engine, an
 optional text interface, and an isolated worker process for safe AI execution.
 
-The project supports two match types:
+The project supports three match types:
 
 - **Single Player (AI):** watch one AI-controlled snake play automatically.
 - **Human vs AI:** alternate turns against the selected AI strategy.
+- **AI vs AI:** compare two independently selected strategies in one match.
 
 ## Features
 
 - Adjustable grid, apple count, move limit, and AI speed
 - Built-in **Greedy** and **Safe Random** strategies
+- Independent AI 1 and AI 2 strategy selection in AI vs AI mode
 - Simple registry for adding custom movement strategies
 - Responsive layout for large and compact windows
 - Interface zoom from 100% to 200%
@@ -48,7 +50,7 @@ If PowerShell blocks activation, the virtual environment can be used directly:
 
 | Setting | Default | Range | Description |
 | --- | ---: | ---: | --- |
-| Game mode | Single Player | — | Automated AI run or Human vs AI |
+| Game mode | Single Player | — | Single Player, Human vs AI, or AI vs AI |
 | Rows | 20 | 10–40 | Arena height |
 | Columns | 20 | 10–40 | Arena width |
 | Apples | 5 | 1–20 | Apples placed when the match starts |
@@ -59,6 +61,10 @@ If PowerShell blocks activation, the virtual environment can be used directly:
 Apples do not respawn after they are eaten. Eating an apple adds one point. A
 wall, self, or opponent collision subtracts one point and ends the match. When
 the move limit is reached, the highest score wins; equal scores produce a draw.
+
+In AI vs AI mode, AI 1 controls the blue snake and moves first. AI 2 controls
+the green snake. One move from each AI counts as a completed round, and both
+strategy instances retain their own state throughout the match.
 
 ## Controls
 
@@ -104,6 +110,7 @@ Text mode provides a line-oriented alternative to the graphical canvas:
 ```powershell
 python -m snake_game --text
 python -m snake_game --text --mode versus
+python -m snake_game --text --mode ai-vs-ai --strategy Greedy --strategy-2 "Safe Random"
 python -m snake_game --text --help
 ```
 
@@ -114,7 +121,7 @@ Available commands:
 | `status` | Show scores, positions, round, and active turn |
 | `board` | Show all snake segments and apple coordinates |
 | `up`, `down`, `left`, `right` | Submit a human move |
-| `next` | Run the current AI turn |
+| `next` | Run the current AI turn, including either side in AI vs AI mode |
 | `restart` | Restart with the same configuration |
 | `help` | Show the command list |
 | `quit` | End the session |
@@ -159,8 +166,9 @@ exceptions, and decisions that exceed five seconds end the run with a visible
 error instead of crashing the application.
 
 Keep strategy classes at module scope. AI strategies are constructed and run in
-a separate process so Windows must be able to import the class. A strategy
-instance remains alive between decisions, allowing it to keep internal state.
+separate processes so Windows must be able to import each class. Strategy
+instances remain alive between decisions, allowing each AI to keep internal
+state.
 
 ## Project structure
 

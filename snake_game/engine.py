@@ -169,7 +169,7 @@ class GameEngine:
         collision = self._collision_type(snake_id, new_head, ate_apple)
         if collision is not None:
             snake.score -= 1
-            self._finish(f"{self._display_name(snake_id)} hit {collision}.")
+            self._finish(f"{self.display_name(snake_id)} hit {collision}.")
             return MoveOutcome(True, collision=collision, message=self.finish_reason)
 
         snake.direction = direction
@@ -191,7 +191,7 @@ class GameEngine:
             return
         self.snakes[snake_id].score -= 1
         self.error_message = message
-        self._finish(f"{self._display_name(snake_id)} strategy failed.")
+        self._finish(f"{self.display_name(snake_id)} strategy failed.")
 
     def _advance_turn(self) -> None:
         if self.config.mode is GameMode.SINGLE:
@@ -248,6 +248,7 @@ class GameEngine:
         self.finish_reason = reason
         self._finished_at = self._time_source()
 
-    @staticmethod
-    def _display_name(snake_id: str) -> str:
+    def display_name(self, snake_id: str) -> str:
+        if self.config.mode is GameMode.AI_VS_AI:
+            return "AI 1" if snake_id == HUMAN_ID else "AI 2"
         return "Human" if snake_id == HUMAN_ID else "AI"
