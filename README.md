@@ -59,8 +59,9 @@ If PowerShell blocks activation, the virtual environment can be used directly:
 | Strategy | Greedy | — | Registered AI movement method |
 
 Apples do not respawn after they are eaten. Eating an apple adds one point. A
-wall, self, or opponent collision subtracts one point and ends the match. When
-the move limit is reached, the highest score wins; equal scores produce a draw.
+wall, self, or opponent collision subtracts one point and ends the match. In a
+multiplayer match, the snake that collides loses immediately. When a match ends
+without a collision, the highest score wins; equal scores produce a draw.
 
 In AI vs AI mode, AI 1 controls the blue snake and moves first. AI 2 controls
 the green snake. One move from each AI counts as a completed round, and both
@@ -160,6 +161,13 @@ strategy choices.
   active snake, and legal moves
 - `snake_id`: the snake that must move
 - `rng`: the supplied random-number generator for reproducible decisions
+
+The body segments of both the controlled snake and its opponent are treated as
+obstacles when legal moves are calculated. Following standard Snake rules, the
+controlled snake may move into its current tail cell when it is not growing,
+because the tail moves away during the same turn. All opponent body segments
+remain obstacles. The legal moves stored in a snapshot apply only to that
+snapshot's current state and must be recalculated after every move.
 
 The method must return a `Direction`. Direct reversals, invalid return values,
 exceptions, and decisions that exceed five seconds end the run with a visible

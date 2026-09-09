@@ -80,11 +80,14 @@ def test_opponent_collision() -> None:
     game.snakes[AI_ID] = SnakeState(AI_ID, [(4, 3), (5, 3), (6, 3)], Direction.LEFT)
     game.apples = [(8, 8)]
 
+    assert Direction.RIGHT not in game.legal_moves_for(HUMAN_ID)
     result = game.step(HUMAN_ID, Direction.RIGHT)
 
     assert result.collision == "the other snake"
     assert game.status is GameStatus.FINISHED
     assert game.active_snake_id == HUMAN_ID
+    assert game.loser_id == HUMAN_ID
+    assert game.winner_id == AI_ID
 
 
 def test_reversal_is_rejected_without_consuming_turn() -> None:
@@ -98,7 +101,7 @@ def test_reversal_is_rejected_without_consuming_turn() -> None:
     assert game.active_snake_id == HUMAN_ID
 
 
-def test_tail_cell_is_legal_when_not_growing() -> None:
+def test_tail_cell_is_legal_when_it_will_move_away() -> None:
     game = engine()
     game.snakes[AI_ID] = SnakeState(
         AI_ID, [(3, 3), (3, 4), (2, 4), (2, 3)], Direction.UP
@@ -147,16 +150,38 @@ def test_move_limit_finishes_and_score_selects_winner() -> None:
 
 
 def test_equal_scores_are_a_draw() -> None:
-    game = engine(GameMode.VERSUS)
-    game.snakes[HUMAN_ID].score = 2
-    game.snakes[AI_ID].score = 3
-    game.snakes[HUMAN_ID] = SnakeState(
-        HUMAN_ID, [(9, 2), (8, 2), (7, 2)], Direction.RIGHT, score=2
-    )
-    game.step(HUMAN_ID, Direction.RIGHT)
-    assert game.snakes[HUMAN_ID].score == 1
-    game.snakes[AI_ID].score = 1
+    game = engine(GameMode.VERSUS, moves=10)
+    game.rounds_completed = 9
+    game.apples = [(0, 0)]
+    game.step(HUMAN_ID, Direction.UP)
+    game.step(AI_ID, Direction.UP)
+
     assert game.is_draw
+
+
+def test_collision_is_an_immediate_loss_even_with_a_higher_score() -> None:
+    game = engine(GameMode.VERSUS)
+    game.snakes[HUMAN_ID] = SnakeState(
+        HUMAN_ID, [(9, 2), (8, 2), (7, 2)], Direction.RIGHT, score=10
+    )
+    game.snakes[AI_ID].score = 0
+
+    game.step(HUMAN_ID, Direction.RIGHT)
+
+    assert game.snakes[HUMAN_ID].score == 9
+    assert game.loser_id == HUMAN_ID
+    assert game.winner_id == AI_ID
+    assert not game.is_draw
+
+
+def test_strategy_failure_is_an_immediate_multiplayer_loss() -> None:
+    game = engine(GameMode.AI_VS_AI)
+    game.snakes[HUMAN_ID].score = 10
+
+    game.fail_strategy(HUMAN_ID, "bad output")
+
+    assert game.loser_id == HUMAN_ID
+    assert game.winner_id == AI_ID
 
 
 def test_elapsed_time_excludes_pause_and_freezes_at_finish() -> None:

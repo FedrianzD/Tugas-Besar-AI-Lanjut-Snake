@@ -627,7 +627,12 @@ class SnakeApp:
                 x = panel.x + 16 + index % 3 * column_width
                 y = panel.y + 14 + index // 3 * 56
                 self._text(label, (x, y), self.font_small, MUTED)
-                value_font = self.font_small if label == "STRATEGIES" else self.font
+                value_font = (
+                    self.font_small
+                    if label == "STRATEGIES"
+                    or (label == "SCORE" and self.config.mode is not GameMode.SINGLE)
+                    else self.font
+                )
                 self._text(
                     self._fit_text(value, value_font, column_width - 12),
                     (x, y + 23),
@@ -644,7 +649,12 @@ class SnakeApp:
         y = 162
         for label, value in self._stat_rows():
             self._text(label, (x, y), self.font_small, MUTED)
-            value_font = self.font_small if label == "STRATEGIES" else self.font
+            value_font = (
+                self.font_small
+                if label == "STRATEGIES"
+                or (label == "SCORE" and self.config.mode is not GameMode.SINGLE)
+                else self.font
+            )
             self._text(self._fit_text(value, value_font, 215), (x, y + 25), value_font, TEXT)
             y += min(66, (panel.height - 250) // 6)
         self._button(
@@ -660,16 +670,16 @@ class SnakeApp:
     def _stat_rows(self) -> list[tuple[str, str]]:
         assert self.engine is not None
         if self.config.mode is GameMode.SINGLE:
-            score = f"AI  {self.engine.snakes[AI_ID].score}"
+            score = f"AI: {self.engine.snakes[AI_ID].score}"
         elif self.config.mode is GameMode.AI_VS_AI:
             score = (
-                f"AI 1 {self.engine.snakes[HUMAN_ID].score}  ·  "
-                f"AI 2 {self.engine.snakes[AI_ID].score}"
+                f"AI 1: {self.engine.snakes[HUMAN_ID].score}  |  "
+                f"AI 2: {self.engine.snakes[AI_ID].score}"
             )
         else:
             score = (
-                f"Human {self.engine.snakes[HUMAN_ID].score}  ·  "
-                f"AI {self.engine.snakes[AI_ID].score}"
+                f"Human: {self.engine.snakes[HUMAN_ID].score}  |  "
+                f"AI: {self.engine.snakes[AI_ID].score}"
             )
         active_id = self.engine.active_snake_id
         active = self.engine.display_name(active_id)
@@ -704,7 +714,11 @@ class SnakeApp:
             subtitle = "Both snakes finished with the same score."
         else:
             title = self.engine.display_name(self.engine.winner_id).upper() + " WINS"
-            subtitle = "Highest final score wins."
+            if self.engine.loser_id is not None:
+                loser = self.engine.display_name(self.engine.loser_id)
+                subtitle = f"{loser} was eliminated."
+            else:
+                subtitle = "Highest final score wins."
         if self.engine.error_message:
             subtitle = self.engine.error_message
         self._overlay(

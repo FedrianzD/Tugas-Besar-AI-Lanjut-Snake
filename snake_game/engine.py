@@ -37,6 +37,7 @@ class GameEngine:
         self.active_snake_id = AI_ID if config.mode is GameMode.SINGLE else HUMAN_ID
         self.finish_reason = ""
         self.error_message = ""
+        self.loser_id: str | None = None
         self._started_at = self._time_source()
         self._paused_at: float | None = None
         self._paused_total = 0.0
@@ -87,6 +88,11 @@ class GameEngine:
     def winner_id(self) -> str | None:
         if self.status is not GameStatus.FINISHED or not self.snakes:
             return None
+        if self.loser_id is not None:
+            survivors = [
+                snake_id for snake_id in self.snakes if snake_id != self.loser_id
+            ]
+            return survivors[0] if len(survivors) == 1 else None
         best = max(snake.score for snake in self.snakes.values())
         leaders = [snake.snake_id for snake in self.snakes.values() if snake.score == best]
         return leaders[0] if len(leaders) == 1 else None
@@ -169,7 +175,10 @@ class GameEngine:
         collision = self._collision_type(snake_id, new_head, ate_apple)
         if collision is not None:
             snake.score -= 1
-            self._finish(f"{self.display_name(snake_id)} hit {collision}.")
+            self._finish(
+                f"{self.display_name(snake_id)} hit {collision}.",
+                loser_id=snake_id,
+            )
             return MoveOutcome(True, collision=collision, message=self.finish_reason)
 
         snake.direction = direction
@@ -191,7 +200,10 @@ class GameEngine:
             return
         self.snakes[snake_id].score -= 1
         self.error_message = message
-        self._finish(f"{self.display_name(snake_id)} strategy failed.")
+        self._finish(
+            f"{self.display_name(snake_id)} strategy failed.",
+            loser_id=snake_id,
+        )
 
     def _advance_turn(self) -> None:
         if self.config.mode is GameMode.SINGLE:
@@ -238,7 +250,7 @@ class GameEngine:
         count = min(self.config.apple_count, len(empty))
         self.apples = self.rng.sample(empty, count)
 
-    def _finish(self, reason: str) -> None:
+    def _finish(self, reason: str, loser_id: str | None = None) -> None:
         if self.status is GameStatus.FINISHED:
             return
         if self.status is GameStatus.PAUSED and self._paused_at is not None:
@@ -246,6 +258,7 @@ class GameEngine:
             self._paused_at = None
         self.status = GameStatus.FINISHED
         self.finish_reason = reason
+        self.loser_id = loser_id
         self._finished_at = self._time_source()
 
     def display_name(self, snake_id: str) -> str:
